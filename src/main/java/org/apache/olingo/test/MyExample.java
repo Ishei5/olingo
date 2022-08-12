@@ -1,37 +1,30 @@
 package org.apache.olingo.test;
 
 import org.apache.olingo.client.api.ODataClient;
-import org.apache.olingo.client.api.communication.request.retrieve.ODataEntitySetIteratorRequest;
 import org.apache.olingo.client.api.communication.request.retrieve.ODataEntitySetRequest;
 import org.apache.olingo.client.api.communication.response.ODataRetrieveResponse;
 import org.apache.olingo.client.api.domain.*;
 import org.apache.olingo.client.core.ODataClientFactory;
-import org.apache.olingo.client.core.domain.ClientEntityImpl;
 import org.apache.olingo.commons.api.edm.EdmPrimitiveTypeException;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class MyExample {
 
     private static final String ORDER_ENTRY_SET_NAME = "Document_ЗаказПокупателя";
-    private static final String ORDER_SELECT_FIELDS = "Ref_Key,Number,Date,АдресДоставки,Организация/Description,Ответственный/Code";
-    private static final String ORDER_EXPAND_FIELDS = "Ответственный/ФизЛицо,Организация";
+    private static final String ORDER_SELECT_FIELDS = "Ref_Key,Number,Date,АдресДоставки,Контрагент/Description,Ответственный/Code";
+    private static final String ORDER_EXPAND_FIELDS = "Ответственный/ФизЛицо,Контрагент";
     private static final String PRODUCT_ENTRY_SET_NAME = "Document_ЗаказПокупателя_Товары";
     private static final String PRODUCT_SELECT_FIELDS = "Количество,КоличествоМест,Коэффициент,ЕдиницаИзмерения/Description,Номенклатура/Description";
     private static final String PRODUCT_EXPAND_FIELDS = "Номенклатура,ЕдиницаИзмерения";
 
     public static final String URI = "http://89.76.239.245:8080/test/odata/standard.odata/";
-//    public static final String URI = "http://localhost:8000/zakaz_select.json";
-//    public static final String URI = "http://localhost:8000/tovari.json";
     private final ODataClient client;
 
     public MyExample() {
@@ -44,20 +37,12 @@ public class MyExample {
     }
 
     private void performe(String uri) {
-//        (URI, "Document_ЗаказПокупателя", "Ref_Key eq guid'fdc3291b-5e10-11ea-b5ce-94de80dde3f4'");
-        URI orderUri = buildUri(URI, ORDER_ENTRY_SET_NAME, createDateRequest("2020-03-05T00:00:00"), ORDER_EXPAND_FIELDS, ORDER_SELECT_FIELDS);
+        URI orderUri = buildUri(uri, ORDER_ENTRY_SET_NAME, createDateRequest("2020-03-05T00:00:00"), ORDER_EXPAND_FIELDS, ORDER_SELECT_FIELDS);
         ClientEntitySet clientEntitySet = readEntities(orderUri);
         List<Map<String, ClientValue>> clientMap = clientEntitySetToListOfMap(clientEntitySet);
         List<OrderDto> orderDtos = clientMap.stream()
                 .map(orderMap -> parseOrder(orderMap))
                 .toList();
-        System.out.println();
-//        clientMap.stream().map(clientMap -> parseOrder());
-//        ClientEntitySetIterator<ClientEntitySet, ClientEntity> iterator = readEntities(orderUri);
-//        while (iterator.hasNext()) {
-//            ClientEntity ce = iterator.next();
-//            parseOrder(ce.getProperties());
-//        }
     }
 
     private List<Map<String, ClientValue>> clientEntitySetToListOfMap(ClientEntitySet clientEntitySet) {
@@ -78,7 +63,6 @@ public class MyExample {
                 .build();
     }
 
-//    private ClientEntitySetIterator<ClientEntitySet, ClientEntity> readEntities(URI absoluteUri) {
     private ClientEntitySet readEntities(URI absoluteUri) {
         System.out.println("URI = " + java.net.URLDecoder.decode(String.valueOf(absoluteUri), StandardCharsets.UTF_8));
         ODataEntitySetRequest<ClientEntitySet> request = client.getRetrieveRequestFactory().getEntitySetRequest(absoluteUri);
@@ -124,7 +108,7 @@ public class MyExample {
 
     private OrderDto parseOrder(Map<String, ClientValue> orderProperties) {
         String refKey = parsePrimitive(orderProperties.get("Ref_Key"));
-
+        System.out.println(refKey);
         URI productUri = buildUri(URI, PRODUCT_ENTRY_SET_NAME, createRefKeyFilterRequest(refKey), PRODUCT_EXPAND_FIELDS, PRODUCT_SELECT_FIELDS);
         ClientEntitySet clientEntitySet = readEntities(productUri);
         List<Map<String, ClientValue>> productsMap = clientEntitySetToListOfMap(clientEntitySet);
@@ -132,41 +116,40 @@ public class MyExample {
                 .map(this::parseProduct)
                 .collect(Collectors.toList());
 
-        OrderDto orderDto = OrderDto.builder()
+        OrderDto build = OrderDto.builder()
                 .orderNumber(parsePrimitive(orderProperties.get("Ref_Key")))
                 .createdDate(parseDate(orderProperties.get("Date")))
                 .address(parsePrimitive(orderProperties.get("АдресДоставки")))
                 .products(products)
-                .clientName(parseComplex(orderProperties.get("Организация")))
+                .clientName(parseComplex(orderProperties.get("Контрагент")))
                 .managerFullName(parseComplex(orderProperties.get("Ответственный")).trim())
+                .orderWeight(getTotalOrderWeight(products))
                 .build();
 
-        return orderDto;
+        return build;
     }
 
-    private void parseProducts(ClientEntitySetIterator<ClientEntitySet, ClientEntity> productIterator) {
-
-        /*List<ProductDto> list = new ArrayList<>(1);
-        while (productIterator.hasNext()) {
-            ClientEntity clientEntity = productIterator.next();
-            ProductDto productDto = parseProduct(clientEntity.getProperties());
-            list.add(productDto);
-        }
-
-        return list;*/
+    private double getTotalOrderWeight(List<ProductDto> products) {
+        return products.stream()
+                .mapToDouble(ProductDto::getTotalProductWeight)
+                .sum();
     }
 
     private ProductDto parseProduct(Map<String, ClientValue> productProperties) {
-        Integer amount = Integer.parseInt(parsePrimitive(productProperties.get("КоличествоМест")));
-        Double totalWeight = Double.valueOf(parsePrimitive(productProperties.get("Количество")).toString());
+        List<String> allowableMeasure = List.of("кг", "л", "шт");
+        int amount = Integer.parseInt(parsePrimitive(productProperties.get("КоличествоМест")));
+        String measure = parseComplex(productProperties.get("ЕдиницаИзмерения"));
+        double totalWeight = allowableMeasure.contains(measure) ?
+                (!measure.equals("шт")) ? Double.parseDouble(parsePrimitive(productProperties.get("Количество")).toString()) : 1.0
+                 : 0.0;
+        String storeName = "Склад №1";
 
-        ProductDto productDto = ProductDto.builder()
+        return ProductDto.builder()
                 .productName(parseComplex(productProperties.get("Номенклатура")))
                 .amount(amount)
                 .unitWeight(totalWeight / amount)
                 .totalProductWeight(totalWeight)
+                .storeName(storeName)
                 .build();
-
-        return productDto;
     }
 }
