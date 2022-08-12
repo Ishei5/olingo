@@ -2,9 +2,11 @@ package org.apache.olingo.test;
 
 import org.apache.olingo.client.api.ODataClient;
 import org.apache.olingo.client.api.communication.request.retrieve.ODataEntitySetIteratorRequest;
+import org.apache.olingo.client.api.communication.request.retrieve.ODataEntitySetRequest;
 import org.apache.olingo.client.api.communication.response.ODataRetrieveResponse;
 import org.apache.olingo.client.api.domain.*;
 import org.apache.olingo.client.core.ODataClientFactory;
+import org.apache.olingo.client.core.domain.ClientEntityImpl;
 import org.apache.olingo.commons.api.edm.EdmPrimitiveTypeException;
 
 import java.net.URI;
@@ -14,6 +16,9 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 public class MyExample {
 
@@ -41,11 +46,26 @@ public class MyExample {
     private void performe(String uri) {
 //        (URI, "Document_ЗаказПокупателя", "Ref_Key eq guid'fdc3291b-5e10-11ea-b5ce-94de80dde3f4'");
         URI orderUri = buildUri(URI, ORDER_ENTRY_SET_NAME, createDateRequest("2020-03-05T00:00:00"), ORDER_EXPAND_FIELDS, ORDER_SELECT_FIELDS);
-        ClientEntitySetIterator<ClientEntitySet, ClientEntity> iterator = readEntities(orderUri);
-        while (iterator.hasNext()) {
-            ClientEntity ce = iterator.next();
-            parseOrder(ce.getProperties());
-        }
+        ClientEntitySet clientEntitySet = readEntities(orderUri);
+        List<Map<String, ClientValue>> clientMap = clientEntitySetToListOfMap(clientEntitySet);
+        List<OrderDto> orderDtos = clientMap.stream()
+                .map(orderMap -> parseOrder(orderMap))
+                .toList();
+        System.out.println();
+//        clientMap.stream().map(clientMap -> parseOrder());
+//        ClientEntitySetIterator<ClientEntitySet, ClientEntity> iterator = readEntities(orderUri);
+//        while (iterator.hasNext()) {
+//            ClientEntity ce = iterator.next();
+//            parseOrder(ce.getProperties());
+//        }
+    }
+
+    private List<Map<String, ClientValue>> clientEntitySetToListOfMap(ClientEntitySet clientEntitySet) {
+        return clientEntitySet.getEntities().stream()
+                .map(ClientEntity::getProperties)
+                .map(clientProperties -> clientProperties.stream()
+                        .collect(Collectors.toMap(ClientProperty::getName, ClientProperty::getValue)))
+                .toList();
     }
 
     public URI buildUri(String serviceUri, String entitySetName, String filter, String expand, String select) {
@@ -58,26 +78,26 @@ public class MyExample {
                 .build();
     }
 
-    private ClientEntitySetIterator<ClientEntitySet, ClientEntity> readEntities(URI absoluteUri) {
+//    private ClientEntitySetIterator<ClientEntitySet, ClientEntity> readEntities(URI absoluteUri) {
+    private ClientEntitySet readEntities(URI absoluteUri) {
         System.out.println("URI = " + java.net.URLDecoder.decode(String.valueOf(absoluteUri), StandardCharsets.UTF_8));
-        ODataEntitySetIteratorRequest<ClientEntitySet, ClientEntity> request =
-                client.getRetrieveRequestFactory().getEntitySetIteratorRequest(absoluteUri);
+        ODataEntitySetRequest<ClientEntitySet> request = client.getRetrieveRequestFactory().getEntitySetRequest(absoluteUri);
         request.setAccept("application/json");
-        ODataRetrieveResponse<ClientEntitySetIterator<ClientEntitySet, ClientEntity>> response = request.execute();
+        ODataRetrieveResponse<ClientEntitySet> response = request.execute();
 
         return response.getBody();
     }
 
-    private String parseComplex(ClientProperty property) {
-        return (String) property.getValue()
+    private String parseComplex(ClientValue value) {
+        return (String) value
                 .asComplex()
                 .asJavaMap()
                 .values()
                 .toArray()[0];
     }
 
-    private <T> T parsePrimitive(ClientProperty property) {
-        ClientPrimitiveValue clientPrimitiveValue = property.getValue().asPrimitive();
+    private <T> T parsePrimitive(ClientValue value) {
+        ClientPrimitiveValue clientPrimitiveValue = value.asPrimitive();
         Class<?> clazz = clientPrimitiveValue.getType().getDefaultType();
 
         try {
@@ -85,6 +105,12 @@ public class MyExample {
         } catch (EdmPrimitiveTypeException exception) {
             throw new RuntimeException(String.format("Error during parsing primitive type - %s", exception));
         }
+    }
+
+    private LocalDate parseDate(ClientValue date) {
+        return LocalDateTime
+                .parse(parsePrimitive(date))
+                .toLocalDate();
     }
 
     private String createRefKeyFilterRequest(String key) {
@@ -95,51 +121,47 @@ public class MyExample {
         return String.format("ДатаОтгрузки eq datetime'%s'", date);
     }
 
-    private LocalDate parseDate(ClientProperty property) {
-        return LocalDateTime
-                .parse(parsePrimitive(property))
-                .toLocalDate();
-    }
 
-    private OrderDto parseOrder(Collection<ClientProperty> orderProperties) {
-        List<ClientProperty> clientProperties = orderProperties.stream().toList();
-        String refKey = parsePrimitive(clientProperties.get(0));
+    private OrderDto parseOrder(Map<String, ClientValue> orderProperties) {
+        String refKey = parsePrimitive(orderProperties.get("Ref_Key"));
 
         URI productUri = buildUri(URI, PRODUCT_ENTRY_SET_NAME, createRefKeyFilterRequest(refKey), PRODUCT_EXPAND_FIELDS, PRODUCT_SELECT_FIELDS);
-        ClientEntitySetIterator<ClientEntitySet, ClientEntity> productIterator = readEntities(productUri);
-        List<ProductDto> products = parseProducts(productIterator);
+        ClientEntitySet clientEntitySet = readEntities(productUri);
+        List<Map<String, ClientValue>> productsMap = clientEntitySetToListOfMap(clientEntitySet);
+        List<ProductDto> products = productsMap.stream()
+                .map(this::parseProduct)
+                .collect(Collectors.toList());
 
         OrderDto orderDto = OrderDto.builder()
-                .orderNumber(parsePrimitive(clientProperties.get(1)))
-                .createdDate(parseDate(clientProperties.get(2)))
-                .address(parsePrimitive(clientProperties.get(3)))
+                .orderNumber(parsePrimitive(orderProperties.get("Ref_Key")))
+                .createdDate(parseDate(orderProperties.get("Date")))
+                .address(parsePrimitive(orderProperties.get("АдресДоставки")))
                 .products(products)
-                .clientName(parseComplex(clientProperties.get(5)))
-                .managerFullName(parseComplex(clientProperties.get(7)).trim())
+                .clientName(parseComplex(orderProperties.get("Организация")))
+                .managerFullName(parseComplex(orderProperties.get("Ответственный")).trim())
                 .build();
-        System.out.println(orderDto);
 
         return orderDto;
     }
 
-    private List<ProductDto> parseProducts(ClientEntitySetIterator<ClientEntitySet, ClientEntity> productIterator) {
-        List<ProductDto> list = new ArrayList<>(1);
+    private void parseProducts(ClientEntitySetIterator<ClientEntitySet, ClientEntity> productIterator) {
+
+        /*List<ProductDto> list = new ArrayList<>(1);
         while (productIterator.hasNext()) {
             ClientEntity clientEntity = productIterator.next();
             ProductDto productDto = parseProduct(clientEntity.getProperties());
             list.add(productDto);
         }
 
-        return list;
+        return list;*/
     }
 
-    private ProductDto parseProduct(Collection<ClientProperty> productProperties) {
-        List<ClientProperty> clientProperties = productProperties.stream().toList();
-        Integer amount = Integer.parseInt(parsePrimitive(clientProperties.get(1)));
-        Double totalWeight = Double.valueOf(parsePrimitive(clientProperties.get(0)).toString());
+    private ProductDto parseProduct(Map<String, ClientValue> productProperties) {
+        Integer amount = Integer.parseInt(parsePrimitive(productProperties.get("КоличествоМест")));
+        Double totalWeight = Double.valueOf(parsePrimitive(productProperties.get("Количество")).toString());
 
         ProductDto productDto = ProductDto.builder()
-                .productName(parseComplex(clientProperties.get(6)))
+                .productName(parseComplex(productProperties.get("Номенклатура")))
                 .amount(amount)
                 .unitWeight(totalWeight / amount)
                 .totalProductWeight(totalWeight)
