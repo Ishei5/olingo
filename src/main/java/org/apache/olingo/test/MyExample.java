@@ -23,6 +23,7 @@ public class MyExample {
     private static final String PRODUCT_ENTRY_SET_NAME = "Document_ЗаказПокупателя_Товары";
     private static final String PRODUCT_SELECT_FIELDS = "Количество,КоличествоМест,Коэффициент,ЕдиницаИзмерения/Description,Номенклатура/Description";
     private static final String PRODUCT_EXPAND_FIELDS = "Номенклатура,ЕдиницаИзмерения";
+    private static final LocalDate DATE = LocalDate.of(2020, 3, 5);
 
     public static final String URI = "http://89.76.239.245:8080/test/odata/standard.odata/";
     private final ODataClient client;
@@ -33,11 +34,11 @@ public class MyExample {
 
     public static void main(String[] args) {
         MyExample myExample = new MyExample();
-        myExample.performe(URI);
+        myExample.perform(URI);
     }
 
-    private void performe(String uri) {
-        URI orderUri = buildUri(uri, ORDER_ENTRY_SET_NAME, createDateRequest("2020-03-05T00:00:00"), ORDER_EXPAND_FIELDS, ORDER_SELECT_FIELDS);
+    private void perform(String uri) {
+        URI orderUri = buildUri(uri, ORDER_ENTRY_SET_NAME, createDateRequest(DATE.atStartOfDay().toString()), ORDER_EXPAND_FIELDS, ORDER_SELECT_FIELDS);
         ClientEntitySet clientEntitySet = readEntities(orderUri);
         List<Map<String, ClientValue>> clientMap = clientEntitySetToListOfMap(clientEntitySet);
         List<OrderDto> orderDtos = clientMap.stream()
